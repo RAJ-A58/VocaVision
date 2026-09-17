@@ -1,8 +1,8 @@
 import os
+import cv2
 from google import genai
 from google.genai import types
 from PIL import Image
-import cv2
 
 def get_genai_client():
     """Initializes the Gemini API client using the environment variable."""
@@ -14,11 +14,12 @@ def get_genai_client():
 def analyze_image(client, cv2_frame):
     """
     Sends the captured frame to Gemini to identify clothing/patterns and food items.
+    Uses types.Part for safe, SDK-compliant multimodal input.
     """
     # Convert OpenCV BGR frame to RGB and then to PIL Image
     color_converted = cv2.cvtColor(cv2_frame, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(color_converted)
-    
+
     prompt = (
         "You are an assistive AI for people who need help identifying objects. "
         "Look at this image. If there is clothing, describe its type, color, and pattern clearly. "
@@ -26,10 +27,14 @@ def analyze_image(client, cv2_frame):
         "Keep the description concise, natural, and helpful for a daily activity assistant. "
         "If neither is prominent, briefly describe what the main subject of the image is."
     )
-    
+
+    # Use types.Part.from_image() for proper SDK-compliant multimodal input
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[pil_image, prompt]
+        model="gemini-2.5-flash-preview-04-17",
+        contents=[
+            types.Part.from_image(pil_image),
+            types.Part.from_text(prompt),
+        ]
     )
-    
+
     return response.text

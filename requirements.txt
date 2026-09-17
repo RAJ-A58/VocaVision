@@ -1,5 +1,5 @@
-opencv-python
-google-genai
-pyttsx3
-python-dotenv
-pillow
+opencv-python>=4.9.0,<5.0
+google-genai>=1.0.0,<2.0
+pyttsx3>=2.90,<3.0
+python-dotenv>=1.0.0,<2.0
+pillow>=10.0.0,<12.0
