@@ -90,10 +90,12 @@ def _preprocess_clothing(frame: np.ndarray) -> np.ndarray:
 
 def analyze_image(food_model: tf.keras.Model,
                   clothing_model: tf.keras.Model,
-                  frame: np.ndarray) -> str:
+                  frame: np.ndarray) -> tuple:
     """
-    Runs the given frame through both classifiers and returns the
-    natural-language description from whichever model is more confident.
+    Runs the frame through both classifiers.
+
+    For clothing: also runs GrabCut segmentation and returns an annotated
+    image with a bounding box, color-tinted mask, and text label.
 
     Args:
         food_model     : Loaded Keras food classifier
@@ -101,10 +103,14 @@ def analyze_image(food_model: tf.keras.Model,
         frame          : OpenCV BGR image (numpy array)
 
     Returns:
-        A descriptive string ready for TTS output.
+        (description: str, annotated_frame: np.ndarray)
+        annotated_frame has clothing region highlighted for clothing predictions,
+        or is the original frame for food predictions.
     """
+    from utils.annotator import segment_and_annotate
+
     # Run both models (suppress per-batch progress bars)
-    food_probs     = food_model.predict(_preprocess_food(frame),     verbose=0)[0]
+    food_probs     = food_model.predict(_preprocess_food(frame),         verbose=0)[0]
     clothing_probs = clothing_model.predict(_preprocess_clothing(frame), verbose=0)[0]
 
     food_conf     = float(np.max(food_probs))
@@ -114,22 +120,21 @@ def analyze_image(food_model: tf.keras.Model,
     clothing_class = CLOTHING_CLASSES[int(np.argmax(clothing_probs))]
 
     # ── Smarter decision: food must have a clear lead to win ──────────────────
-    # Problem with naive comparison: food at 60% beats clothing at 15%,
-    # even when the image is clearly a clothing item.
-    #
-    # Rules:
-    #   - Food wins ONLY IF it has >75% confidence (high certainty), OR
-    #   - Food wins if it leads clothing by more than 30 percentage points
-    #   - Otherwise default to clothing (safer fallback for real-world photos)
-    FOOD_MIN_THRESHOLD  = 0.75   # food must be at least this confident to win outright
-    FOOD_MARGIN         = 0.30   # OR food must lead clothing by this much
+    # Food wins ONLY IF it has >75% confidence, OR leads clothing by >30 points
+    FOOD_MIN_THRESHOLD = 0.75
+    FOOD_MARGIN        = 0.30
 
     food_wins = (food_conf >= FOOD_MIN_THRESHOLD) or \
                 (food_conf - clothing_conf >= FOOD_MARGIN)
 
     if food_wins:
         label = food_class.replace("_", " ")
-        return f"I can see {label}. I am {food_conf:.0%} confident."
+        description = f"I can see {label}. I am {food_conf:.0%} confident."
+        # No segmentation for food — return original frame
+        return description, frame.copy()
     else:
         color = describe_colors(frame)
-        return f"I can see a {color} {clothing_class}. I am {clothing_conf:.0%} confident."
+        description = f"I can see a {color} {clothing_class}. I am {clothing_conf:.0%} confident."
+        # Segment and annotate the clothing region
+        annotated = segment_and_annotate(frame, clothing_class, color, clothing_conf)
+        return description, annotated

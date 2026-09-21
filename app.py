@@ -41,19 +41,23 @@ def predict(pil_image: Image.Image):
       1. A text description
       2. A spoken audio file (MP3 via gTTS)
       3. A confidence bar chart figure
+      4. An annotated image with clothing region highlighted (for clothing)
     """
     if pil_image is None:
-        return "Please upload an image.", None, None
+        return "Please upload an image.", None, None, None
 
     # Convert PIL (RGB) → OpenCV (BGR) for our preprocessing functions
     frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-    # Get raw probability arrays from both models
+    # Get raw probability arrays from both models (for the chart)
     food_probs     = food_model.predict(_preprocess_food(frame),         verbose=0)[0]
     clothing_probs = clothing_model.predict(_preprocess_clothing(frame), verbose=0)[0]
 
-    # Get the natural-language description
-    description = analyze_image(food_model, clothing_model, frame)
+    # analyze_image now returns (description, annotated_bgr_frame)
+    description, annotated_bgr = analyze_image(food_model, clothing_model, frame)
+
+    # Convert annotated BGR frame → PIL RGB for Gradio Image output
+    annotated_pil = Image.fromarray(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB))
 
     # Generate spoken audio using gTTS
     audio_path = _generate_audio(description)
@@ -61,7 +65,7 @@ def predict(pil_image: Image.Image):
     # Build the confidence chart
     fig = _make_confidence_chart(food_probs, clothing_probs)
 
-    return description, audio_path, fig
+    return description, audio_path, fig, annotated_pil
 
 
 def _generate_audio(text: str) -> str:
@@ -137,6 +141,10 @@ demo = gr.Interface(
         gr.Plot(
             label="📊 Model Confidence Scores",
         ),
+        gr.Image(
+            label="📍 Detected & Annotated (clothing only)",
+            type="pil",
+        ),
     ],
     title="🎙️ VocaVision",
     description=_DESCRIPTION,
@@ -145,12 +153,14 @@ demo = gr.Interface(
 **Recognisable Food:** {_FOOD_CLASSES_STR}  
 **Recognisable Clothing:** {_CLOTHES_CLASSES_STR}
 """,
-    flagging_mode="never",   # replaces allow_flagging in Gradio 6.0
+    flagging_mode="never",
 )
 
 if __name__ == "__main__":
     # theme moved from Interface() to launch() in Gradio 6.0
+    # share=True creates a temporary public URL valid for 72 hours
     demo.launch(
+        share=True,
         theme=gr.themes.Soft(
             primary_hue="emerald",
             secondary_hue="blue",
