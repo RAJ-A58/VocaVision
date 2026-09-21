@@ -39,41 +39,39 @@ def segment_and_annotate(
     clothing_class: str,
     color_name: str,
     confidence: float,
+    fg_mask: np.ndarray = None,
 ) -> np.ndarray:
     """
-    Detects the main clothing item using GrabCut, then draws:
-      - A semi-transparent tinted mask over the clothing region
-      - A colored bounding box around it
-      - A label showing color + clothing type + confidence
+    Detects the main clothing item (optionally using a pre-computed mask),
+    then draws a semi-transparent tinted mask, bounding box, and label.
 
     Args:
         frame          : BGR OpenCV image
-        clothing_class : Predicted clothing category (e.g. "T-shirt or top")
-        color_name     : Detected dominant color (e.g. "red")
-        confidence     : Model confidence score (0.0 – 1.0)
+        clothing_class : Predicted clothing category
+        color_name     : Detected dominant color
+        confidence     : Model confidence (0–1)
+        fg_mask        : Optional pre-computed GrabCut mask (1=fg, 0=bg).
+                         If None, GrabCut is run internally.
 
     Returns:
         Annotated BGR image
     """
     h, w = frame.shape[:2]
 
-    # ── Step 1: GrabCut segmentation ─────────────────────────────────────────
-    mask     = np.zeros((h, w), np.uint8)
-    bgd      = np.zeros((1, 65), np.float64)
-    fgd      = np.zeros((1, 65), np.float64)
-
-    # Rectangle covers the central 80% — where clothing typically sits
-    mx, my   = int(w * 0.08), int(h * 0.08)
-    rect     = (mx, my, w - 2 * mx, h - 2 * my)
-
-    try:
-        cv2.grabCut(frame, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
-    except cv2.error:
-        # GrabCut can fail on very uniform images — fall back to full frame
-        return _draw_fullframe_label(frame, clothing_class, color_name, confidence)
-
-    # Probable/definite foreground → 1, everything else → 0
-    fg_mask  = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0).astype(np.uint8)
+    # ── Step 1: Use provided mask or run GrabCut ──────────────────────────────
+    if fg_mask is None:
+        mask   = np.zeros((h, w), np.uint8)
+        bgd    = np.zeros((1, 65), np.float64)
+        fgd    = np.zeros((1, 65), np.float64)
+        mx, my = int(w * 0.05), int(h * 0.05)
+        rect   = (mx, my, w - 2 * mx, h - 2 * my)
+        try:
+            cv2.grabCut(frame, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+            fg_mask = np.where(
+                (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0
+            ).astype(np.uint8)
+        except cv2.error:
+            return _draw_fullframe_label(frame, clothing_class, color_name, confidence)
 
     # ── Step 2: Find the largest foreground contour (the clothing item) ───────
     contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

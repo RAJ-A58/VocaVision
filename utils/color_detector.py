@@ -36,25 +36,39 @@ def _bgr_to_name(bgr_pixel: np.ndarray) -> str:
     return "neutral"
 
 
-def describe_colors(frame: np.ndarray, n_colors: int = 3) -> str:
+def describe_colors(frame: np.ndarray, n_colors: int = 3,
+                    fg_mask: np.ndarray = None) -> str:
     """
-    Finds the dominant colors in a BGR frame using K-Means clustering,
-    then maps each cluster center to a human-readable name.
+    Finds the dominant colors using K-Means clustering.
 
-    Only reports a secondary color if it covers at least 25% of the image —
-    this prevents small objects (hangers, backgrounds) from polluting the result.
+    If fg_mask is provided (a binary uint8 mask where 1 = clothing),
+    color detection runs only on those pixels — ignoring background,
+    shadows, hangers, and other distractors.
+
+    Only reports a secondary color if it covers at least 25% of the
+    analysed pixels.
 
     Args:
-        frame   : OpenCV BGR image (H x W x 3 numpy array)
-        n_colors: Number of clusters to compute (more = finer analysis)
+        frame    : OpenCV BGR image (H x W x 3)
+        n_colors : Number of K-Means clusters
+        fg_mask  : Optional binary mask (H x W), 1 = include, 0 = ignore
 
     Returns:
-        A string such as "blue" or "red and white" (only meaningful colors)
+        A string such as "red" or "blue and white"
     """
-    # Downsample for speed — color detection does not need full resolution
+    # Downsample for speed
     small = cv2.resize(frame, (80, 80))
-    pixels = small.reshape(-1, 3).astype(np.float32)
-    total  = len(pixels)
+
+    if fg_mask is not None:
+        # Resize mask to match downsampled image and extract only clothing pixels
+        small_mask = cv2.resize(fg_mask, (80, 80), interpolation=cv2.INTER_NEAREST)
+        pixels = small[small_mask == 1].astype(np.float32)
+        if len(pixels) < n_colors * 10:   # too few pixels → fall back to full image
+            pixels = small.reshape(-1, 3).astype(np.float32)
+    else:
+        pixels = small.reshape(-1, 3).astype(np.float32)
+
+    total = len(pixels)
 
     kmeans = KMeans(n_clusters=n_colors, n_init=10, random_state=42)
     kmeans.fit(pixels)

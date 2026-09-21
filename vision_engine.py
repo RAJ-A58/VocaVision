@@ -86,6 +86,29 @@ def _preprocess_clothing(frame: np.ndarray) -> np.ndarray:
     img  = img.astype(np.float32) / 255.0
     return img.reshape(1, 28, 28, 1)
 
+
+def _grabcut_mask(frame: np.ndarray) -> np.ndarray:
+    """
+    Runs GrabCut to produce a foreground binary mask for the main
+    clothing item in the frame. The central 84% rectangle is used
+    as the initialisation hint.
+
+    Returns a uint8 mask (1 = clothing/foreground, 0 = background).
+    Falls back to a full-frame mask of all-ones if GrabCut fails.
+    """
+    h, w   = frame.shape[:2]
+    mask   = np.zeros((h, w), np.uint8)
+    bgd    = np.zeros((1, 65), np.float64)
+    fgd    = np.zeros((1, 65), np.float64)
+    mx, my = int(w * 0.05), int(h * 0.05)   # 5% margin → covers more of the shirt
+    rect   = (mx, my, w - 2 * mx, h - 2 * my)
+    try:
+        cv2.grabCut(frame, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+        return np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0).astype(np.uint8)
+    except cv2.error:
+        return np.ones((h, w), np.uint8)   # fallback: treat whole frame as foreground
+
+
 # ── Inference ─────────────────────────────────────────────────────────────────
 
 def analyze_image(food_model: tf.keras.Model,
@@ -130,11 +153,13 @@ def analyze_image(food_model: tf.keras.Model,
     if food_wins:
         label = food_class.replace("_", " ")
         description = f"I can see {label}. I am {food_conf:.0%} confident."
-        # No segmentation for food — return original frame
         return description, frame.copy()
     else:
-        color = describe_colors(frame)
+        # ── Get GrabCut mask first, then detect color on clothing pixels only ──
+        fg_mask = _grabcut_mask(frame)
+        color   = describe_colors(frame, fg_mask=fg_mask)
         description = f"I can see a {color} {clothing_class}. I am {clothing_conf:.0%} confident."
-        # Segment and annotate the clothing region
-        annotated = segment_and_annotate(frame, clothing_class, color, clothing_conf)
+        annotated   = segment_and_annotate(frame, clothing_class, color, clothing_conf,
+                                           fg_mask=fg_mask)
         return description, annotated
+
