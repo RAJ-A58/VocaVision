@@ -129,7 +129,6 @@ demo = gr.Interface(
         gr.Textbox(
             label="📝 AI Description",
             lines=2,
-            show_copy_button=True,
         ),
         gr.Audio(
             label="🔊 Voice Output",
@@ -146,12 +145,14 @@ demo = gr.Interface(
 **Recognisable Food:** {_FOOD_CLASSES_STR}  
 **Recognisable Clothing:** {_CLOTHES_CLASSES_STR}
 """,
-    theme=gr.themes.Soft(
-        primary_hue="emerald",
-        secondary_hue="blue",
-    ),
-    allow_flagging="never",
+    flagging_mode="never",   # replaces allow_flagging in Gradio 6.0
 )
 
 if __name__ == "__main__":
-    demo.launch()
+    # theme moved from Interface() to launch() in Gradio 6.0
+    demo.launch(
+        theme=gr.themes.Soft(
+            primary_hue="emerald",
+            secondary_hue="blue",
+        )
+    )
