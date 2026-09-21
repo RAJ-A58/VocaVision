@@ -36,30 +36,49 @@ def _bgr_to_name(bgr_pixel: np.ndarray) -> str:
     return "neutral"
 
 
-def describe_colors(frame: np.ndarray, n_colors: int = 2) -> str:
+def describe_colors(frame: np.ndarray, n_colors: int = 3) -> str:
     """
     Finds the dominant colors in a BGR frame using K-Means clustering,
     then maps each cluster center to a human-readable name.
 
+    Only reports a secondary color if it covers at least 25% of the image —
+    this prevents small objects (hangers, backgrounds) from polluting the result.
+
     Args:
         frame   : OpenCV BGR image (H x W x 3 numpy array)
-        n_colors: Number of dominant color clusters to extract
+        n_colors: Number of clusters to compute (more = finer analysis)
 
     Returns:
-        A string such as "blue and white" or "dark red"
+        A string such as "blue" or "red and white" (only meaningful colors)
     """
     # Downsample for speed — color detection does not need full resolution
     small = cv2.resize(frame, (80, 80))
     pixels = small.reshape(-1, 3).astype(np.float32)
+    total  = len(pixels)
 
     kmeans = KMeans(n_clusters=n_colors, n_init=10, random_state=42)
     kmeans.fit(pixels)
 
-    # Sort centers by cluster size so most-dominant color comes first
+    # Sort clusters by size (most dominant first)
     counts = np.bincount(kmeans.labels_)
-    sorted_centers = kmeans.cluster_centers_[np.argsort(-counts)]
+    order  = np.argsort(-counts)
+    sorted_centers = kmeans.cluster_centers_[order]
+    sorted_counts  = counts[order]
 
-    names = [_bgr_to_name(c.astype(np.uint8)) for c in sorted_centers]
+    # Only include a color if its cluster covers ≥25% of the image
+    # → filters out hangers, backgrounds, and other small distractors
+    MIN_COVERAGE = 0.25
+    significant  = [
+        (center, count / total)
+        for center, count in zip(sorted_centers, sorted_counts)
+        if count / total >= MIN_COVERAGE
+    ]
+
+    # Always include at least the most dominant color
+    if not significant:
+        significant = [(sorted_centers[0], sorted_counts[0] / total)]
+
+    names = [_bgr_to_name(c.astype(np.uint8)) for c, _ in significant]
 
     # Deduplicate while preserving dominance order
     seen, unique = set(), []
@@ -69,3 +88,4 @@ def describe_colors(frame: np.ndarray, n_colors: int = 2) -> str:
             unique.append(n)
 
     return " and ".join(unique)
+
