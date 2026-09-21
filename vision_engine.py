@@ -113,7 +113,21 @@ def analyze_image(food_model: tf.keras.Model,
     food_class     = FOOD_CLASSES[int(np.argmax(food_probs))]
     clothing_class = CLOTHING_CLASSES[int(np.argmax(clothing_probs))]
 
-    if food_conf >= clothing_conf:
+    # ── Smarter decision: food must have a clear lead to win ──────────────────
+    # Problem with naive comparison: food at 60% beats clothing at 15%,
+    # even when the image is clearly a clothing item.
+    #
+    # Rules:
+    #   - Food wins ONLY IF it has >75% confidence (high certainty), OR
+    #   - Food wins if it leads clothing by more than 30 percentage points
+    #   - Otherwise default to clothing (safer fallback for real-world photos)
+    FOOD_MIN_THRESHOLD  = 0.75   # food must be at least this confident to win outright
+    FOOD_MARGIN         = 0.30   # OR food must lead clothing by this much
+
+    food_wins = (food_conf >= FOOD_MIN_THRESHOLD) or \
+                (food_conf - clothing_conf >= FOOD_MARGIN)
+
+    if food_wins:
         label = food_class.replace("_", " ")
         return f"I can see {label}. I am {food_conf:.0%} confident."
     else:
