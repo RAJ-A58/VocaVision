@@ -30,7 +30,7 @@ from utils.color_detector import describe_colors
 
 # ── Load both models once at startup (not on every request) ───────────────────
 print("Loading models...")
-food_model, clothing_model = load_models()
+food_model, clothing_model, _USING_PYTORCH = load_models()
 print("Models ready.")
 
 # ── Core prediction function ──────────────────────────────────────────────────
@@ -54,7 +54,8 @@ def predict(pil_image: Image.Image):
     clothing_probs = clothing_model.predict(_preprocess_clothing(frame), verbose=0)[0]
 
     # analyze_image now returns (description, annotated_bgr_frame)
-    description, annotated_bgr = analyze_image(food_model, clothing_model, frame)
+    description, annotated_bgr = analyze_image(food_model, clothing_model, frame,
+                                               using_pytorch=_USING_PYTORCH)
 
     # Convert annotated BGR frame → PIL RGB for Gradio Image output
     annotated_pil = Image.fromarray(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB))

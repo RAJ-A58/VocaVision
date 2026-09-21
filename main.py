@@ -7,7 +7,7 @@ def main():
     try:
         # Initialize TTS engine and load both local neural network models
         tts_engine = initialize_tts()
-        food_model, clothing_model = load_models()
+        food_model, clothing_model, using_pytorch = load_models()
     except Exception as e:
         print(f"Initialization Error: {e}")
         return
@@ -30,7 +30,8 @@ def main():
 
                 try:
                     # analyze_image now returns (description, annotated_frame)
-                    description, _ = analyze_image(food_model, clothing_model, frame)
+                    description, _ = analyze_image(food_model, clothing_model, frame,
+                                                   using_pytorch=using_pytorch)
                     speak_async(tts_engine, description)
                 except Exception as e:
                     print(f"Analysis Error: {e}")
