@@ -23,7 +23,6 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(__file__))
 from vision_engine import (
     CLOTHING_CLASSES, FOOD_CLASSES,
-    _preprocess_clothing, _preprocess_food,
     analyze_image, load_models,
 )
 from utils.color_detector import describe_colors
@@ -49,13 +48,10 @@ def predict(pil_image: Image.Image):
     # Convert PIL (RGB) → OpenCV (BGR) for our preprocessing functions
     frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-    # Get raw probability arrays from both models (for the chart)
-    food_probs     = food_model.predict(_preprocess_food(frame),         verbose=0)[0]
-    clothing_probs = clothing_model.predict(_preprocess_clothing(frame), verbose=0)[0]
-
-    # analyze_image now returns (description, annotated_bgr_frame)
-    description, annotated_bgr = analyze_image(food_model, clothing_model, frame,
-                                               using_pytorch=_USING_PYTORCH)
+    # analyze_image runs preprocessing, background removal, models & segmentation
+    description, annotated_bgr, food_probs, clothing_probs = analyze_image(
+        food_model, clothing_model, frame, using_pytorch=_USING_PYTORCH
+    )
 
     # Convert annotated BGR frame → PIL RGB for Gradio Image output
     annotated_pil = Image.fromarray(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB))

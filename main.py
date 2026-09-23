@@ -29,9 +29,9 @@ def main():
                 print("Analyzing image...")
 
                 try:
-                    # analyze_image now returns (description, annotated_frame)
-                    description, _ = analyze_image(food_model, clothing_model, frame,
-                                                   using_pytorch=using_pytorch)
+                    # analyze_image returns (description, annotated_frame, food_probs, clothing_probs)
+                    description, *_ = analyze_image(food_model, clothing_model, frame,
+                                                    using_pytorch=using_pytorch)
                     speak_async(tts_engine, description)
                 except Exception as e:
                     print(f"Analysis Error: {e}")

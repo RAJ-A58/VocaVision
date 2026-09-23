@@ -37,11 +37,23 @@ _CLTH_TF_PATH     = os.path.join(_MODELS_DIR, "clothing_classifier.keras")   # T
 
 # ── Optional: background removal ─────────────────────────────────────────────
 try:
-    from rembg import remove as _rembg_remove
+    from rembg import remove as _rembg_remove, new_session as _rembg_new_session
     from PIL import Image as _PIL_Image
     _REMBG_AVAILABLE = True
-except ImportError:
+except Exception:
     _REMBG_AVAILABLE = False
+
+_REMBG_SESSION = None
+
+def _get_rembg_session():
+    global _REMBG_SESSION
+    if _REMBG_SESSION is None and _REMBG_AVAILABLE:
+        try:
+            # u2netp is a lightweight 4.5MB model (vs 1GB default)
+            _REMBG_SESSION = _rembg_new_session("u2netp")
+        except Exception:
+            _REMBG_SESSION = False
+    return _REMBG_SESSION if _REMBG_SESSION else None
 
 # ── Optional: PyTorch ─────────────────────────────────────────────────────────
 try:
@@ -102,7 +114,7 @@ def load_models() -> tuple:
         )
 
     if _REMBG_AVAILABLE:
-        print("[VocaVision] Background removal (rembg): ENABLED ✅")
+        print("[VocaVision] Background removal (rembg): ENABLED [OK]")
     else:
         print("[VocaVision] Background removal (rembg): not installed (pip install rembg)")
 
@@ -117,13 +129,14 @@ def _remove_background(frame: np.ndarray) -> np.ndarray:
     with background replaced by white pixels. Falls back to original
     frame if rembg is not available.
     """
-    if not _REMBG_AVAILABLE:
+    session = _get_rembg_session()
+    if session is None:
         return frame
     try:
         pil_in  = _PIL_Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        pil_out = _rembg_remove(pil_in)                        # RGBA with transparent bg
+        pil_out = _rembg_remove(pil_in, session=session)          # RGBA with transparent bg
         bg      = _PIL_Image.new("RGB", pil_out.size, (255, 255, 255))
-        bg.paste(pil_out, mask=pil_out.split()[3])             # paste on white bg
+        bg.paste(pil_out, mask=pil_out.split()[3])               # paste on white bg
         return cv2.cvtColor(np.array(bg), cv2.COLOR_RGB2BGR)
     except Exception:
         return frame
@@ -248,7 +261,7 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
     if food_wins:
         label       = food_class.replace("_", " ")
         description = f"I can see {label}. I am {food_conf:.0%} confident."
-        return description, frame.copy()
+        return description, frame.copy(), food_probs, clothing_probs
     else:
         # Step 5: Detect color on clothing pixels only, then annotate
         fg_mask     = _grabcut_mask(clean_frame)
@@ -256,4 +269,5 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
         description = f"I can see a {color} {clothing_class}. I am {clothing_conf:.0%} confident."
         annotated   = segment_and_annotate(frame, clothing_class, color, clothing_conf,
                                            fg_mask=fg_mask)
-        return description, annotated
+        return description, annotated, food_probs, clothing_probs
+

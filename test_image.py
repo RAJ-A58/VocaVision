@@ -70,7 +70,7 @@ def _wrap_text(text, max_chars):
         lines.append(current)
     return lines
 
-def test_image_file(path, food_model, clothing_model):
+def test_image_file(path, food_model, clothing_model, using_pytorch=True):
     """Tests a single image file and displays annotated result."""
     frame = cv2.imread(path)
     if frame is None:
@@ -79,11 +79,9 @@ def test_image_file(path, food_model, clothing_model):
 
     print(f"\nAnalyzing: {path}")
 
-    # Get raw probabilities for display
-    from vision_engine import _preprocess_food, _preprocess_clothing
-    food_probs     = food_model.predict(_preprocess_food(frame),         verbose=0)[0]
-    clothing_probs = clothing_model.predict(_preprocess_clothing(frame), verbose=0)[0]
-    description    = analyze_image(food_model, clothing_model, frame)
+    description, _, food_probs, clothing_probs = analyze_image(
+        food_model, clothing_model, frame, using_pytorch=using_pytorch
+    )
 
     print(f"\nResult: {description}")
     print(f"\nFood confidence scores:")
@@ -105,7 +103,7 @@ def test_image_file(path, food_model, clothing_model):
     cv2.imwrite(out_path, annotated)
     print(f"\nAnnotated image saved → {out_path}")
 
-def test_webcam(food_model, clothing_model):
+def test_webcam(food_model, clothing_model, using_pytorch=True):
     """Opens webcam. Press SPACE to capture+analyze, Q to quit."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -129,10 +127,9 @@ def test_webcam(food_model, clothing_model):
         if key == ord(' '):
             snapshot = frame.copy()
             print("\nAnalyzing snapshot...")
-            from vision_engine import _preprocess_food, _preprocess_clothing
-            food_probs     = food_model.predict(_preprocess_food(snapshot),         verbose=0)[0]
-            clothing_probs = clothing_model.predict(_preprocess_clothing(snapshot), verbose=0)[0]
-            description    = analyze_image(food_model, clothing_model, snapshot)
+            description, _, food_probs, clothing_probs = analyze_image(
+                food_model, clothing_model, snapshot, using_pytorch=using_pytorch
+            )
 
             print(f"Result: {description}")
             annotated = draw_result(snapshot, description, food_probs, clothing_probs)
@@ -153,12 +150,13 @@ def main():
     args = parser.parse_args()
 
     print("Loading models...")
-    food_model, clothing_model = load_models()
+    food_model, clothing_model, using_pytorch = load_models()
 
     if args.image:
-        test_image_file(args.image, food_model, clothing_model)
+        test_image_file(args.image, food_model, clothing_model, using_pytorch=using_pytorch)
     else:
-        test_webcam(food_model, clothing_model)
+        test_webcam(food_model, clothing_model, using_pytorch=using_pytorch)
 
 if __name__ == "__main__":
     main()
+
