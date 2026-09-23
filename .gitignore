@@ -27,3 +27,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Caches & temporary files
+.fashion_mnist_cache/
+.gradio/
+*.mp3
+*.wav
+*_result.jpg
