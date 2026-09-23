@@ -238,8 +238,8 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
     # Step 1: Remove background for cleaner inference
     clean_frame = _remove_background(frame)
 
-    # Step 2: Food prediction (always TF)
-    food_probs = food_model.predict(_preprocess_food(clean_frame), verbose=0)[0]
+    # Step 2: Food prediction (run on original frame — Food-101 trained on natural scene/table context)
+    food_probs = food_model.predict(_preprocess_food(frame), verbose=0)[0]
     food_conf  = float(np.max(food_probs))
     food_class = FOOD_CLASSES[int(np.argmax(food_probs))]
 
@@ -252,11 +252,22 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
     clothing_conf  = float(np.max(clothing_probs))
     clothing_class = CLOTHING_CLASSES[int(np.argmax(clothing_probs))]
 
-    # Step 4: Smart decision
-    FOOD_MIN_THRESHOLD = 0.75
-    FOOD_MARGIN        = 0.30
-    food_wins = (food_conf >= FOOD_MIN_THRESHOLD) or \
-                (food_conf - clothing_conf >= FOOD_MARGIN)
+    # Step 4: Smart domain decision (Food vs Clothing)
+    #
+    # Principles:
+    # 1. On food images (pizza, sushi, etc.), Fashion-MNIST lacks an "Other" class
+    #    and dumps probability into "Bag" (the generic round/textured catch-all).
+    # 2. When food is recognized with solid confidence (>= 50%), it should not be
+    #    trumped by a "Bag" false positive.
+    # 3. On real clothing (T-shirts, trousers, coats), food confidence is low (< 40%).
+    if food_conf >= 0.50 and clothing_class == "Bag":
+        food_wins = True
+    elif food_conf >= 0.55:
+        food_wins = True
+    elif food_conf > clothing_conf:
+        food_wins = True
+    else:
+        food_wins = False
 
     if food_wins:
         label       = food_class.replace("_", " ")
