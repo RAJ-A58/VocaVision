@@ -4,9 +4,12 @@ All 20 target classes: 10 Food + 10 Clothing
 
 These are the YOLO model's output class IDs.
 Open Images V7 class names are mapped here for dataset download.
+
+NOTE: OI_FOOD_MAP and OI_CLOTHING_MAP must match what was actually
+downloaded from Open Images — do not change without re-downloading.
 """
 
-# ── Our 20 target classes ─────────────────────────────────────────────────────
+# -- Our 20 target classes ----------------------------------------------------
 FOOD_CLASSES = [
     "apple_pie",   # 0
     "fried_rice",  # 1
@@ -35,8 +38,11 @@ CLOTHING_CLASSES = [
 
 ALL_CLASSES = FOOD_CLASSES + CLOTHING_CLASSES
 
-# ── Open Images V7 → VocaVision class name mapping ──────────────────────────
-# Keys are exact Open Images class labels; values are our target class names
+# -- Open Images V7 -> VocaVision class name mapping --------------------------
+# Keys are EXACT Open Images display class labels (verified valid).
+# Values are our target class names.
+#
+# FOOD — classes that were actually downloaded (9 valid; "Noodle" was invalid)
 OI_FOOD_MAP = {
     "Pizza":        "pizza",
     "Hamburger":    "hamburger",
@@ -44,28 +50,29 @@ OI_FOOD_MAP = {
     "Ice cream":    "ice_cream",
     "Sushi":        "sushi",
     "Waffle":       "waffles",
-    "Noodle":       "ramen",
     "French fries": "fried_rice",
     "Cake":         "apple_pie",
-    "Pretzel":      "samosa",   # visual substitute (round + fried dough)
+    "Pretzel":      "samosa",    # downloaded; maps to samosa slot
+    # "Noodle" was INVALID (not in Open Images) -- ramen slot will be sparse
 }
 
+# CLOTHING — classes that were actually downloaded ("T-shirt" and "Shoe" were invalid)
 OI_CLOTHING_MAP = {
-    "T-shirt":   "t_shirt",
-    "Trousers":  "trouser",
-    "Dress":     "dress",
-    "Coat":      "coat",
-    "Shorts":    "pullover",  # catch-all upper body
-    "Shoe":      "sneaker",
-    "High heels":"sandal",
-    "Handbag":   "bag",
-    "Jacket":    "shirt",
-    "Boot":      "ankle_boot",
+    "Trousers":   "trouser",
+    "Dress":      "dress",
+    "Coat":       "coat",
+    "Shorts":     "pullover",    # downloaded; maps to pullover slot
+    "High heels": "sandal",      # downloaded; maps to sandal slot
+    "Handbag":    "bag",
+    "Jacket":     "shirt",
+    "Boot":       "ankle_boot",
+    # "T-shirt" was INVALID; t_shirt slot will be sparse
+    # "Shoe"    was INVALID; sneaker slot will be sparse
 }
 
 OI_ALL_MAP = {**OI_FOOD_MAP, **OI_CLOTHING_MAP}
 
 # Which Open Images classes to download
-OI_FOOD_CLASSES    = list(OI_FOOD_MAP.keys())
+OI_FOOD_CLASSES     = list(OI_FOOD_MAP.keys())
 OI_CLOTHING_CLASSES = list(OI_CLOTHING_MAP.keys())
-OI_ALL_OI_CLASSES  = OI_FOOD_CLASSES + OI_CLOTHING_CLASSES
+OI_ALL_OI_CLASSES   = OI_FOOD_CLASSES + OI_CLOTHING_CLASSES

@@ -1,8 +1,10 @@
 """
-VocaVision — YOLO Dataset Preparation
-======================================
-Downloads food + clothing images from Open Images V7 via fiftyone,
-converts them to YOLO format, and creates the dataset/data.yaml file.
+VocaVision — YOLO Dataset Preparation v2
+=========================================
+Fixed approach:
+  - Downloads ALL food + clothing classes in ONE fiftyone call (no overwrite clash)
+  - Uses a single shared dataset directory so images aren't clobbered
+  - Converts directly using display label names that fiftyone stores
 
 Usage:
     python training/prepare_yolo_dataset.py
@@ -10,15 +12,8 @@ Usage:
 Output:
     dataset/
     ├── data.yaml
-    ├── train/
-    │   ├── images/   (jpg files)
-    │   └── labels/   (txt files — YOLO format)
-    └── val/
-        ├── images/
-        └── labels/
-
-YOLO label format per line:
-    class_id  x_center  y_center  width  height   (all 0-1 normalised)
+    ├── train/images/ + train/labels/
+    └── val/images/   + val/labels/
 """
 
 import os
@@ -30,160 +25,142 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-# ── Add project root so we can import yolo_classes ───────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from training.yolo_classes import (
-    ALL_CLASSES, OI_ALL_OI_CLASSES, OI_ALL_MAP,
-    OI_FOOD_CLASSES, OI_CLOTHING_CLASSES
-)
+from training.yolo_classes import ALL_CLASSES, OI_ALL_MAP, OI_FOOD_CLASSES, OI_CLOTHING_CLASSES
 
-# ── Config ────────────────────────────────────────────────────────────────────
-DATASET_DIR   = Path(__file__).parent.parent / "dataset"
-TRAIN_IMAGES  = DATASET_DIR / "train" / "images"
-TRAIN_LABELS  = DATASET_DIR / "train" / "labels"
-VAL_IMAGES    = DATASET_DIR / "val"   / "images"
-VAL_LABELS    = DATASET_DIR / "val"   / "labels"
-DATA_YAML     = DATASET_DIR / "data.yaml"
+# ── Config ─────────────────────────────────────────────────────────────────────
+DATASET_DIR  = Path(__file__).parent.parent / "dataset"
+TRAIN_IMAGES = DATASET_DIR / "train" / "images"
+TRAIN_LABELS = DATASET_DIR / "train" / "labels"
+VAL_IMAGES   = DATASET_DIR / "val"   / "images"
+VAL_LABELS   = DATASET_DIR / "val"   / "labels"
+DATA_YAML    = DATASET_DIR / "data.yaml"
 
-# Max images to download per Open Images class
-# (keep low for faster download; increase to 800–1200 for better accuracy)
-MAX_PER_CLASS = 300
-VAL_SPLIT     = 0.15   # 15% of images → validation set
+MAX_SAMPLES = 6000   # total images across all classes (food + clothing)
+VAL_SPLIT   = 0.15
 
 
 def make_dirs():
     for d in [TRAIN_IMAGES, TRAIN_LABELS, VAL_IMAGES, VAL_LABELS]:
         d.mkdir(parents=True, exist_ok=True)
-    print(f"[OK] Dataset directories ready under {DATASET_DIR}")
+    print(f"[OK] Directories ready under {DATASET_DIR}")
 
 
-def download_open_images():
-    """
-    Uses fiftyone to download bounding-box annotated images from Open Images V7.
-    Requires: pip install fiftyone
-    """
+def download_all():
+    """Download food + clothing in ONE combined fiftyone call."""
     try:
-        import fiftyone as fo
         import fiftyone.zoo as foz
     except ImportError:
-        print("ERROR: fiftyone not installed. Run: pip install fiftyone")
+        print("ERROR: pip install fiftyone")
         sys.exit(1)
 
-    print(f"\n[1/3] Downloading from Open Images V7...")
-    print(f"      Classes : {OI_ALL_OI_CLASSES}")
-    print(f"      Max/cls : {MAX_PER_CLASS}")
+    all_classes = OI_FOOD_CLASSES + OI_CLOTHING_CLASSES
+    print(f"\n[1/3] Downloading from Open Images V7 ...")
+    print(f"      Classes ({len(all_classes)}): {all_classes}")
+    print(f"      Max samples: {MAX_SAMPLES}")
 
-    # Download food
-    print("\n  Downloading FOOD classes...")
-    food_ds = foz.load_zoo_dataset(
+    ds = foz.load_zoo_dataset(
         "open-images-v7",
         split="train",
         label_types=["detections"],
-        classes=OI_FOOD_CLASSES,
-        max_samples=MAX_PER_CLASS * len(OI_FOOD_CLASSES),
-        dataset_name="vocavision_food_tmp",
+        classes=all_classes,
+        max_samples=MAX_SAMPLES,
+        dataset_name="vocavision_all_tmp",
         overwrite=True,
     )
-
-    # Download clothing
-    print("\n  Downloading CLOTHING classes...")
-    cloth_ds = foz.load_zoo_dataset(
-        "open-images-v7",
-        split="train",
-        label_types=["detections"],
-        classes=OI_CLOTHING_CLASSES,
-        max_samples=MAX_PER_CLASS * len(OI_CLOTHING_CLASSES),
-        dataset_name="vocavision_clothing_tmp",
-        overwrite=True,
-    )
-
-    return food_ds, cloth_ds
+    print(f"      Loaded {len(ds)} samples")
+    return ds
 
 
-def convert_to_yolo(fo_dataset, split_images, split_labels,
-                    other_images=None, other_labels=None):
-    """
-    Converts a fiftyone dataset to YOLO txt label format.
-    Returns number of images written to train, val splits.
-    """
-    import fiftyone as fo
-
-    all_items = list(fo_dataset)
+def convert_to_yolo(fo_dataset):
+    """Convert fiftyone dataset -> YOLO txt labels, train/val split."""
+    all_items  = list(fo_dataset)
     random.shuffle(all_items)
-    n_val   = int(len(all_items) * VAL_SPLIT)
-    val_set = set(range(n_val))
+    n_val      = int(len(all_items) * VAL_SPLIT)
+    val_idxs   = set(range(n_val))
 
-    written = 0
+    written_train = written_val = skipped = 0
+    label_counts  = {}
+
     for idx, sample in enumerate(all_items):
         img_path = sample.filepath
         if not os.path.exists(img_path):
+            skipped += 1
             continue
 
         img = cv2.imread(img_path)
         if img is None:
+            skipped += 1
             continue
         H, W = img.shape[:2]
 
         lines = []
         for det in (sample.ground_truth.detections if sample.ground_truth else []):
-            oi_label = det.label
-            if oi_label not in OI_ALL_MAP:
+            lbl = det.label
+            if lbl not in OI_ALL_MAP:
                 continue
-            our_label  = OI_ALL_MAP[oi_label]
-            class_id   = ALL_CLASSES.index(our_label)
-            x1, y1, bw, bh = det.bounding_box   # fiftyone uses relative [0,1]
-            x_c = x1 + bw / 2
-            y_c = y1 + bh / 2
-            lines.append(f"{class_id} {x_c:.6f} {y_c:.6f} {bw:.6f} {bh:.6f}")
+            our_lbl  = OI_ALL_MAP[lbl]
+            class_id = ALL_CLASSES.index(our_lbl)
+            x1, y1, bw, bh = det.bounding_box   # fiftyone: relative [0,1]
+            xc = x1 + bw / 2
+            yc = y1 + bh / 2
+            lines.append(f"{class_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
+            label_counts[our_lbl] = label_counts.get(our_lbl, 0) + 1
 
         if not lines:
+            skipped += 1
             continue
 
-        is_val  = (idx in val_set) and (other_images is not None)
-        img_dst = (other_images  if is_val else split_images) / os.path.basename(img_path)
-        lbl_dst = (other_labels  if is_val else split_labels) / (Path(img_path).stem + ".txt")
+        is_val   = idx in val_idxs
+        img_dst  = (VAL_IMAGES  if is_val else TRAIN_IMAGES) / os.path.basename(img_path)
+        lbl_dst  = (VAL_LABELS  if is_val else TRAIN_LABELS) / (Path(img_path).stem + ".txt")
 
         shutil.copy2(img_path, img_dst)
         lbl_dst.write_text("\n".join(lines))
-        written += 1
 
-    return written
+        if is_val:
+            written_val   += 1
+        else:
+            written_train += 1
+
+    print(f"\n      Train: {written_train}  |  Val: {written_val}  |  Skipped: {skipped}")
+    print("\n      Per-class box counts:")
+    for cls in ALL_CLASSES:
+        cnt = label_counts.get(cls, 0)
+        bar = "#" * min(30, cnt // 10)
+        print(f"        {cls:15s} {cnt:5d}  {bar}")
+
+    return written_train, written_val
 
 
 def write_data_yaml():
     cfg = {
-        "path"  : str(DATASET_DIR.resolve()),
-        "train" : "train/images",
-        "val"   : "val/images",
-        "nc"    : len(ALL_CLASSES),
-        "names" : ALL_CLASSES,
+        "path" : str(DATASET_DIR.resolve()),
+        "train": "train/images",
+        "val"  : "val/images",
+        "nc"   : len(ALL_CLASSES),
+        "names": ALL_CLASSES,
     }
     with open(DATA_YAML, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
-    print(f"\n[3/3] data.yaml written → {DATA_YAML}")
+    print(f"\n[3/3] data.yaml written -> {DATA_YAML}")
 
 
 def main():
     random.seed(42)
     make_dirs()
 
-    food_ds, cloth_ds = download_open_images()
+    fo_ds = download_all()
 
-    print("\n[2/3] Converting to YOLO label format...")
-    n_food  = convert_to_yolo(food_ds,  TRAIN_IMAGES, TRAIN_LABELS,
-                               VAL_IMAGES, VAL_LABELS)
-    n_cloth = convert_to_yolo(cloth_ds, TRAIN_IMAGES, TRAIN_LABELS,
-                               VAL_IMAGES, VAL_LABELS)
-
-    print(f"      Food images   : {n_food}")
-    print(f"      Cloth images  : {n_cloth}")
-
+    print("\n[2/3] Converting to YOLO label format ...")
     write_data_yaml()
 
-    print("\n============================================================")
-    print("  Dataset ready! Now run:")
+    n_train, n_val = convert_to_yolo(fo_ds)
+
+    print("\n" + "="*60)
+    print("  Dataset ready!  Now run:")
     print("  python training/train_yolo.py")
-    print("============================================================\n")
+    print("="*60 + "\n")
 
 
 if __name__ == "__main__":
