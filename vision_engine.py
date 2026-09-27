@@ -181,6 +181,38 @@ def _preprocess_clothing(frame: np.ndarray) -> np.ndarray:
 
 # ── PyTorch TTA Clothing (fallback) ──────────────────────────────────────────
 
+def _clothing_to_fmnist_style(bgr_frame: np.ndarray) -> np.ndarray:
+    """
+    Convert a real clothing photo to match Fashion-MNIST training distribution.
+
+    Fashion-MNIST: WHITE object on BLACK background (28x28 grayscale).
+    Real photo   : Colored object on WHITE background (after rembg).
+
+    Fix: invert grayscale so clothing = bright, background = dark — matching
+    training data appearance. Then auto-crop tight to the object.
+    Returns a BGR image ready for the standard torchvision transforms.
+    """
+    gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
+    inverted = 255 - gray                               # invert: dark bg, bright clothing
+
+    # Auto-crop to clothing bounding box (remove white padding)
+    _, thresh = cv2.threshold(inverted, 15, 255, cv2.THRESH_BINARY)
+    coords = cv2.findNonZero(thresh)
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        pad = 8
+        x1 = max(0, x - pad);          y1 = max(0, y - pad)
+        x2 = min(inverted.shape[1], x + w + pad)
+        y2 = min(inverted.shape[0], y + h + pad)
+        inverted = inverted[y1:y2, x1:x2]
+
+    # Contrast stretch so brightest pixel = 255
+    if inverted.max() > 0:
+        inverted = (inverted.astype(np.float32) / inverted.max() * 255).astype(np.uint8)
+
+    return cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)  # back to 3-ch for torchvision
+
+
 _CLOTHING_PT_TF = (T.Compose([
     T.ToPILImage(),
     T.Grayscale(num_output_channels=3),
@@ -197,12 +229,14 @@ _TTA_TRANSFORMS = [
                T.Resize((256,256)), T.CenterCrop(224), T.ToTensor(),
                T.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])]),
     T.Compose([T.ToPILImage(), T.Grayscale(3), T.Resize((224,224)),
-               T.ColorJitter(brightness=0.3), T.ToTensor(),
+               T.ColorJitter(brightness=0.2), T.ToTensor(),
                T.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])]),
 ] if _TORCH_AVAILABLE else []
 
 def _predict_clothing_pytorch(model, frame: np.ndarray, use_tta: bool = True) -> np.ndarray:
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Convert to Fashion-MNIST style FIRST (invert + crop) before TTA pipeline
+    fmnist_frame = _clothing_to_fmnist_style(frame)
+    rgb = cv2.cvtColor(fmnist_frame, cv2.COLOR_BGR2RGB)
     if use_tta and _TTA_TRANSFORMS:
         preds = []
         for tf_aug in _TTA_TRANSFORMS:
@@ -214,6 +248,7 @@ def _predict_clothing_pytorch(model, frame: np.ndarray, use_tta: bool = True) ->
         tensor = _CLOTHING_PT_TF(rgb).unsqueeze(0).to(_TORCH_DEVICE)
         with torch.no_grad():
             return F.softmax(model(tensor), dim=1).cpu().numpy()[0]
+
 
 
 # ── GrabCut ──────────────────────────────────────────────────────────────────
