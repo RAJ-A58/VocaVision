@@ -363,26 +363,35 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
 
     clean_frame = _remove_background(frame)
 
-    # Food prediction
+    # ── Food prediction ───────────────────────────────────────────────────────
     food_probs = food_model.predict(_preprocess_food(frame), verbose=0)[0]
     food_conf  = float(np.max(food_probs))
     food_class = FOOD_CLASSES[int(np.argmax(food_probs))]
 
-    # Clothing prediction
+    # ── Clothing prediction ───────────────────────────────────────────────────
     if using_pytorch and _TORCH_AVAILABLE and hasattr(clothing_model, "parameters"):
-        clothing_probs = _predict_clothing_pytorch(clothing_model, clean_frame, use_tta=True)
+        clothing_probs_raw = _predict_clothing_pytorch(clothing_model, clean_frame, use_tta=True)
     else:
-        clothing_probs = clothing_model.predict(_preprocess_clothing(clean_frame), verbose=0)[0]
+        clothing_probs_raw = clothing_model.predict(_preprocess_clothing(clean_frame), verbose=0)[0]
+
+    # Bag-penalty: "Bag" is the most common false positive class.
+    # Reduce its effective confidence by 40% so other classes can overtake it.
+    clothing_probs = clothing_probs_raw.copy()
+    bag_idx = CLOTHING_CLASSES.index("bag") if "bag" in CLOTHING_CLASSES else -1
+    if bag_idx >= 0:
+        clothing_probs[bag_idx] *= 0.60
 
     clothing_conf  = float(np.max(clothing_probs))
     clothing_class = CLOTHING_CLASSES[int(np.argmax(clothing_probs))]
 
-    # Smart domain decision
-    if food_conf >= 0.50 and clothing_class == "Bag":
+    # ── Domain decision ───────────────────────────────────────────────────────
+    # Raised food threshold to 0.75: food model can give ~60% on clothing images
+    # due to color similarity (red t-shirt → waffles/samosa). Need high certainty.
+    if food_conf >= 0.75 and clothing_class == "bag":
         food_wins = True
-    elif food_conf >= 0.55:
+    elif food_conf >= 0.75:
         food_wins = True
-    elif food_conf > clothing_conf:
+    elif food_conf > clothing_conf + 0.25:   # food must lead by a clear margin
         food_wins = True
     else:
         food_wins = False
@@ -394,10 +403,11 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
     else:
         fg_mask     = _grabcut_mask(clean_frame)
         color       = describe_colors(clean_frame, fg_mask=fg_mask)
-        description = f"I can see a {color} {clothing_class}. I am {clothing_conf:.0%} confident."
+        description = f"I can see a {color} {clothing_class.replace('_',' ')}. I am {clothing_conf:.0%} confident."
         annotated   = segment_and_annotate(frame, clothing_class, color, clothing_conf,
                                            fg_mask=fg_mask)
         return description, annotated, food_probs, clothing_probs
+
 
 
 # ── Main Entry Point ──────────────────────────────────────────────────────────
