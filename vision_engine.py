@@ -280,7 +280,7 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
     """
     from utils.annotator import _draw_fullframe_label
 
-    conf_threshold = 0.35
+    conf_threshold = 0.50          # raised: cuts false bag/sneaker detections
 
     results  = yolo_model(frame, conf=conf_threshold, verbose=False)[0]
     boxes    = results.boxes
@@ -422,6 +422,11 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
     if using_yolo and yolo_model is not None:
         description, annotated, detections = _analyze_with_yolo(yolo_model, frame)
 
+        # If YOLO found nothing confident enough, fall back to classifier
+        if not detections:
+            print("[YOLO] No confident detections -- falling back to classifier")
+            return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+
         # Build dummy prob arrays for the confidence chart in app.py
         food_probs     = np.zeros(len(FOOD_CLASSES),     dtype=np.float32)
         clothing_probs = np.zeros(len(CLOTHING_CLASSES), dtype=np.float32)
@@ -431,15 +436,8 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
                 if idx >= 0:
                     food_probs[idx] = max(food_probs[idx], det["conf"])
             else:
-                yolo_to_clothing = {
-                    "t_shirt": "T-shirt or top", "trouser": "Trouser",
-                    "pullover": "Pullover", "dress": "Dress", "coat": "Coat",
-                    "sandal": "Sandal", "shirt": "Shirt", "sneaker": "Sneaker",
-                    "bag": "Bag", "ankle_boot": "Ankle boot"
-                }
-                standard = yolo_to_clothing.get(det["raw"])
-                if standard and standard in CLOTHING_CLASSES:
-                    idx = CLOTHING_CLASSES.index(standard)
+                if det["raw"] in CLOTHING_CLASSES:
+                    idx = CLOTHING_CLASSES.index(det["raw"])
                     clothing_probs[idx] = max(clothing_probs[idx], det["conf"])
 
         return description, annotated, food_probs, clothing_probs
