@@ -1,4 +1,4 @@
-# VocaVision 🎙️👁️
+# VocaVision 
 
 **AI-Based Color, Clothing and Food Recognition Assistive System**
 
