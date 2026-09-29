@@ -10,6 +10,7 @@ YOLO mode:
   - Single model detects ALL objects in one forward pass (~15ms GPU)
   - Bounding box crops used for precise color analysis
   - Handles multiple objects in one image simultaneously
+  - Class-specific confidence thresholds reduce bag/sneaker false positives
 
 Fallback (non-YOLO) mode:
   - Hybrid PyTorch (clothing) + TF (food) classification
@@ -39,6 +40,32 @@ YOLO_CLASSES = [
 ]
 YOLO_FOOD_IDS     = set(range(0,  10))
 YOLO_CLOTHING_IDS = set(range(10, 20))
+
+# ── Class-specific confidence thresholds (YOLO) ───────────────────────────────
+# Bag and sneaker are the most common false positives on clothing images.
+# Raising their individual thresholds significantly cuts wrong detections
+# without hurting detection of other classes.
+_YOLO_CLASS_THRESHOLDS: dict[int, float] = {
+    18: 0.75,   # bag        — very frequent FP on t-shirts / folded garments
+    17: 0.70,   # sneaker    — confused with sandal and ankle-boot crops
+    15: 0.65,   # sandal     — occasionally confused with ankle-boot
+    19: 0.65,   # ankle_boot — sometimes triggered by bag straps
+}
+_YOLO_DEFAULT_THRESHOLD = 0.52   # base threshold for all other classes
+
+# ── Natural-language display names for YOLO clothing classes ──────────────────
+_YOLO_DISPLAY_NAMES: dict[str, str] = {
+    "t_shirt":    "T-shirt",
+    "trouser":    "trousers",
+    "pullover":   "pullover",
+    "dress":      "dress",
+    "coat":       "coat",
+    "sandal":     "sandals",
+    "shirt":      "shirt",
+    "sneaker":    "sneakers",
+    "bag":        "bag",
+    "ankle_boot": "ankle boots",
+}
 
 # ── Model Paths ───────────────────────────────────────────────────────────────
 _DIR          = os.path.dirname(__file__)
@@ -116,8 +143,15 @@ def load_models() -> tuple:
             print(f"[VocaVision] Loading clothing classifier v2 (PyTorch, device={_TORCH_DEVICE})...")
             m = tvm.mobilenet_v2(weights=None)
             m.classifier[1] = torch.nn.Linear(m.last_channel, len(CLOTHING_CLASSES))
-            m.load_state_dict(torch.load(_CLTH_PT_PATH, map_location=_TORCH_DEVICE,
-                                         weights_only=True))
+            checkpoint = torch.load(_CLTH_PT_PATH, map_location=_TORCH_DEVICE,
+                                     weights_only=False)
+            # Support both a raw state-dict and a wrapped checkpoint
+            # (keys: model_state, classes, img_size, architecture)
+            if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+                state_dict = checkpoint["model_state"]
+            else:
+                state_dict = checkpoint
+            m.load_state_dict(state_dict)
             m.eval().to(_TORCH_DEVICE)
             clothing_model = m
             using_pytorch  = True
@@ -167,15 +201,15 @@ def _remove_background(frame: np.ndarray) -> np.ndarray:
 # ── Preprocessing (for fallback classifiers) ──────────────────────────────────
 
 def _preprocess_food(frame: np.ndarray) -> np.ndarray:
-    rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb, (224, 224))
-    arr   = resized.astype(np.float32) / 255.0
+    arr     = resized.astype(np.float32) / 255.0
     return np.expand_dims(arr, axis=0)
 
 def _preprocess_clothing(frame: np.ndarray) -> np.ndarray:
-    gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray    = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     resized = cv2.resize(gray, (28, 28))
-    arr   = resized.astype(np.float32) / 255.0
+    arr     = resized.astype(np.float32) / 255.0
     return np.expand_dims(arr, axis=(0, -1))
 
 
@@ -192,7 +226,7 @@ def _clothing_to_fmnist_style(bgr_frame: np.ndarray) -> np.ndarray:
     training data appearance. Then auto-crop tight to the object.
     Returns a BGR image ready for the standard torchvision transforms.
     """
-    gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
+    gray     = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
     inverted = 255 - gray                               # invert: dark bg, bright clothing
 
     # Auto-crop to clothing bounding box (remove white padding)
@@ -250,7 +284,6 @@ def _predict_clothing_pytorch(model, frame: np.ndarray, use_tta: bool = True) ->
             return F.softmax(model(tensor), dim=1).cpu().numpy()[0]
 
 
-
 # ── GrabCut ──────────────────────────────────────────────────────────────────
 
 def _grabcut_mask(frame: np.ndarray) -> np.ndarray:
@@ -269,6 +302,54 @@ def _grabcut_mask(frame: np.ndarray) -> np.ndarray:
 
 # ── YOLO Inference ────────────────────────────────────────────────────────────
 
+def _passes_class_threshold(class_id: int, conf: float) -> bool:
+    """
+    Returns True only when the detection confidence clears the per-class bar.
+
+    Bag (id=18) and sneaker (id=17) have elevated thresholds because they are
+    the most common YOLO false-positives on plain garment images.
+    """
+    threshold = _YOLO_CLASS_THRESHOLDS.get(class_id, _YOLO_DEFAULT_THRESHOLD)
+    return conf >= threshold
+
+
+def _build_description(food_items: list, cloth_items: list) -> str:
+    """
+    Generates a natural-language sentence from detected items.
+
+    Examples
+    --------
+    • 1 food  → "I can see a pizza."
+    • 2 foods → "I can see a pizza and a hamburger."
+    • 1 cloth → "I can see a red T-shirt."
+    • mix     → "I can see a pizza. I can also see a blue coat."
+    """
+    def _oxford(items: list[str]) -> str:
+        """Join item names with commas / 'and', Oxford-comma style."""
+        if len(items) == 1:
+            return items[0]
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+    parts: list[str] = []
+
+    if food_items:
+        names = [d["label"] for d in food_items]
+        determiners = [f"a {n}" for n in names]
+        parts.append(f"I can see {_oxford(determiners)}.")
+
+    if cloth_items:
+        descs = [f"a {d['label']}" for d in cloth_items]
+        connector = "I can also see" if parts else "I can see"
+        parts.append(f"{connector} {_oxford(descs)}.")
+
+    if not parts:
+        return "I can see something, but I am not sure what it is."
+
+    return " ".join(parts)
+
+
 def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
     """
     Runs the custom YOLOv8 model on the frame.
@@ -278,11 +359,8 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
         annotated      : np.ndarray — frame with bounding boxes + labels drawn
         detections     : list  — [{label, conf, bbox, is_food, color}]
     """
-    from utils.annotator import _draw_fullframe_label
-
-    conf_threshold = 0.50          # raised: cuts false bag/sneaker detections
-
-    results  = yolo_model(frame, conf=conf_threshold, verbose=False)[0]
+    # Run inference with the base threshold; per-class filtering happens below
+    results  = yolo_model(frame, conf=_YOLO_DEFAULT_THRESHOLD, verbose=False)[0]
     boxes    = results.boxes
 
     if boxes is None or len(boxes) == 0:
@@ -290,31 +368,39 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
 
     annotated   = frame.copy()
     detections  = []
-    desc_parts  = []
 
     for box in boxes:
         class_id = int(box.cls[0])
         conf     = float(box.conf[0])
+
+        # ── Per-class confidence gate ─────────────────────────────────────────
+        if not _passes_class_threshold(class_id, conf):
+            continue
+
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
         # Clamp coords to image bounds
         x1 = max(0, x1); y1 = max(0, y1)
-        x2 = min(frame.shape[1]-1, x2); y2 = min(frame.shape[0]-1, y2)
+        x2 = min(frame.shape[1] - 1, x2); y2 = min(frame.shape[0] - 1, y2)
 
         raw_label = YOLO_CLASSES[class_id]
         is_food   = class_id in YOLO_FOOD_IDS
         is_cloth  = class_id in YOLO_CLOTHING_IDS
 
-        # ── Color detection for clothing ──────────────────────────────────────
+        # ── Color detection for clothing only ─────────────────────────────────
         color = None
         if is_cloth and (x2 - x1) > 20 and (y2 - y1) > 20:
             crop  = frame[y1:y2, x1:x2]
             color = describe_colors(crop)
 
-        # ── Build display label ───────────────────────────────────────────────
-        display_label = raw_label.replace("_", " ").title()
-        if color:
-            display_label = f"{color} {display_label}"
+        # ── Human-readable display label ──────────────────────────────────────
+        if is_food:
+            display_name = raw_label.replace("_", " ").title()
+        else:
+            display_name = _YOLO_DISPLAY_NAMES.get(raw_label,
+                                                    raw_label.replace("_", " ").title())
+
+        display_label = f"{color} {display_name}" if color else display_name
 
         detections.append({
             "label"   : display_label,
@@ -329,27 +415,21 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
         box_color = (0, 120, 255) if is_food else (50, 220, 80)
         cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, 2)
 
-        # Label background
-        label_str = f"{display_label} {conf:.0%}"
+        # Label background banner above the box
+        label_str = f"{display_label}  {conf:.0%}"
         (tw, th), _ = cv2.getTextSize(label_str, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
         lx1, ly1 = x1, max(0, y1 - th - 8)
         cv2.rectangle(annotated, (lx1, ly1), (lx1 + tw + 6, y1), box_color, -1)
         cv2.putText(annotated, label_str, (lx1 + 3, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
 
+    if not detections:
+        return "I could not detect any known objects with enough confidence.", frame.copy(), []
+
     # ── Build voice description ───────────────────────────────────────────────
-    food_items  = [d for d in detections if d["is_food"]]
+    food_items  = [d for d in detections if     d["is_food"]]
     cloth_items = [d for d in detections if not d["is_food"]]
-
-    if food_items:
-        food_names = ", ".join(d["label"] for d in food_items)
-        desc_parts.append(f"I can see {food_names}.")
-
-    if cloth_items:
-        cloth_descs = [f"a {d['label']}" for d in cloth_items]
-        desc_parts.append("I can see " + ", ".join(cloth_descs) + ".")
-
-    description = " ".join(desc_parts) if desc_parts else "I can see something, but I am not sure what it is."
+    description = _build_description(food_items, cloth_items)
 
     return description, annotated, detections
 
@@ -377,7 +457,7 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
     # Bag-penalty: "Bag" is the most common false positive class.
     # Reduce its effective confidence by 40% so other classes can overtake it.
     clothing_probs = clothing_probs_raw.copy()
-    bag_idx = CLOTHING_CLASSES.index("bag") if "bag" in CLOTHING_CLASSES else -1
+    bag_idx = CLOTHING_CLASSES.index("Bag") if "Bag" in CLOTHING_CLASSES else -1
     if bag_idx >= 0:
         clothing_probs[bag_idx] *= 0.60
 
@@ -387,7 +467,7 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
     # ── Domain decision ───────────────────────────────────────────────────────
     # Raised food threshold to 0.75: food model can give ~60% on clothing images
     # due to color similarity (red t-shirt → waffles/samosa). Need high certainty.
-    if food_conf >= 0.75 and clothing_class == "bag":
+    if food_conf >= 0.75 and clothing_class == "Bag":
         food_wins = True
     elif food_conf >= 0.75:
         food_wins = True
@@ -398,12 +478,15 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
 
     if food_wins:
         label       = food_class.replace("_", " ")
-        description = f"I can see {label}. I am {food_conf:.0%} confident."
+        description = f"I can see a {label}. I am {food_conf:.0%} confident."
         return description, frame.copy(), food_probs, clothing_probs
     else:
         fg_mask     = _grabcut_mask(clean_frame)
         color       = describe_colors(clean_frame, fg_mask=fg_mask)
-        description = f"I can see a {color} {clothing_class.replace('_',' ')}. I am {clothing_conf:.0%} confident."
+        description = (
+            f"I can see a {color} {clothing_class.lower()}. "
+            f"I am {clothing_conf:.0%} confident."
+        )
         annotated   = segment_and_annotate(frame, clothing_class, color, clothing_conf,
                                            fg_mask=fg_mask)
         return description, annotated, food_probs, clothing_probs
@@ -446,8 +529,22 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
                 if idx >= 0:
                     food_probs[idx] = max(food_probs[idx], det["conf"])
             else:
-                if det["raw"] in CLOTHING_CLASSES:
-                    idx = CLOTHING_CLASSES.index(det["raw"])
+                # Map YOLO raw name back to CLOTHING_CLASSES display name for chart
+                yolo_to_cloth = {
+                    "t_shirt":    "T-shirt or top",
+                    "trouser":    "Trouser",
+                    "pullover":   "Pullover",
+                    "dress":      "Dress",
+                    "coat":       "Coat",
+                    "sandal":     "Sandal",
+                    "shirt":      "Shirt",
+                    "sneaker":    "Sneaker",
+                    "bag":        "Bag",
+                    "ankle_boot": "Ankle boot",
+                }
+                chart_name = yolo_to_cloth.get(det["raw"])
+                if chart_name and chart_name in CLOTHING_CLASSES:
+                    idx = CLOTHING_CLASSES.index(chart_name)
                     clothing_probs[idx] = max(clothing_probs[idx], det["conf"])
 
         return description, annotated, food_probs, clothing_probs
