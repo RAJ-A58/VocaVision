@@ -523,7 +523,8 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
 
 def analyze_image(food_model, clothing_model, frame: np.ndarray,
                   using_pytorch: bool = True,
-                  yolo_model=None, using_yolo: bool = False) -> tuple:
+                  yolo_model=None, using_yolo: bool = False,
+                  allow_fallback: bool = True) -> tuple:
     """
     Unified inference entry point.
 
@@ -533,6 +534,7 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
         using_pytorch              : whether clothing model is PyTorch
         yolo_model                 : ultralytics YOLO instance (or None)
         using_yolo                 : True when yolo_model is available
+        allow_fallback             : False disables heavy GrabCut/rembg on live video
 
     Returns:
         (description: str, annotated_frame: np.ndarray,
@@ -541,10 +543,13 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
     if using_yolo and yolo_model is not None:
         description, annotated, detections = _analyze_with_yolo(yolo_model, frame)
 
-        # If YOLO found nothing confident enough, fall back to classifier
+        # If YOLO found nothing confident enough
         if not detections:
-            print("[YOLO] No confident detections -- falling back to classifier")
-            return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+            if allow_fallback:
+                print("[YOLO] No confident detections -- falling back to classifier")
+                return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+            else:
+                return "I could not detect any known objects.", frame.copy(), np.zeros(len(FOOD_CLASSES), dtype=np.float32), np.zeros(len(CLOTHING_CLASSES), dtype=np.float32)
 
         # Build dummy prob arrays for the confidence chart in app.py
         food_probs     = np.zeros(len(FOOD_CLASSES),     dtype=np.float32)

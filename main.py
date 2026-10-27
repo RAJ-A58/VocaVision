@@ -162,6 +162,11 @@ class VocaVisionApp:
         print("      [M]          : Toggle voice mute\n")
 
         cap = cv2.VideoCapture(src)
+        # Minimize buffer latency to eliminate stream lag
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
         if not cap.isOpened():
             print(f"[-] Error: Failed to open camera source '{src}'.")
             print("    -> If using mobile IP Webcam, check phone Wi-Fi IP and start the server.")
@@ -186,14 +191,14 @@ class VocaVisionApp:
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     # Brief wait for network stream buffering
-                    time.sleep(0.02)
+                    time.sleep(0.01)
                     continue
 
                 curr_time = time.time()
                 fps = 0.9 * fps + 0.1 * (1.0 / max(1e-5, (curr_time - prev_time)))
                 prev_time = curr_time
 
-                # Run unified inference (YOLO v3 / fallback)
+                # Run fast real-time inference (disables heavy GrabCut/rembg on live feed)
                 description, annotated, _, _ = analyze_image(
                     self.food_model,
                     self.clothing_model,
@@ -201,6 +206,7 @@ class VocaVisionApp:
                     using_pytorch=self.using_pytorch,
                     yolo_model=self.yolo_model,
                     using_yolo=self.using_yolo,
+                    allow_fallback=False,
                 )
 
                 # Audio throttling: announce when new items appear with cooldown
@@ -278,6 +284,7 @@ class VocaVisionApp:
                     using_pytorch=self.using_pytorch,
                     yolo_model=self.yolo_model,
                     using_yolo=self.using_yolo,
+                    allow_fallback=False,
                 )
 
                 timestamp = time.strftime("%H:%M:%S")
