@@ -81,6 +81,16 @@ You can choose to snap & analyze a webcam frame, run continuous background camer
 
 ### 2. Direct CLI Commands
 
+**Live video stream with real-time bounding boxes & color labels:**
+```bash
+python main.py --live-view
+```
+
+**Stream from mobile phone camera over Wi-Fi (IP Webcam):**
+```bash
+python main.py --live-view --camera http://192.168.1.X:8080/video
+```
+
 **Analyze a single image file:**
 ```bash
 python main.py --image path/to/image.jpg

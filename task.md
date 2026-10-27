@@ -33,6 +33,9 @@ All neural networks and pipelines run **100% locally** without external API depe
   - Extracts dominant colors directly from detected bounding box crops.
   - Recognizes **14 distinct color profiles** (Chromatic: Red, Orange, Yellow, Green, Blue, Navy, Purple, Pink; Achromatic/Earth: White, Black, Gray, Brown, Beige, Neutral).
   - Background/studio backdrop filtering (eliminates near-white lighting glare and near-black shadow clusters).
+- [x] **Dynamic Bounding Box Color Marking (`vision_engine.py`)**:
+  - Bounding boxes and title banners are **dynamically tinted** with the exact detected clothing color (e.g., blue bounding box for blue shirt, red box for red dress, orange for food).
+  - High-contrast text switching (dark text on light colors like white/yellow, white text on dark colors).
 - [x] **Background Segmentation (`rembg`)**:
   - Integrated u2netp lightweight background removal for precise garment boundary isolation.
 
@@ -40,28 +43,56 @@ All neural networks and pipelines run **100% locally** without external API depe
 - [x] **Offline Text-to-Speech (`audio_output.py`)**:
   - Offline SAPI5 / espeak speech output via `pyttsx3`.
   - Threaded non-blocking asynchronous speech worker (`speak_async`), preventing frame drops or terminal lockups during speech.
+  - Throttled smart speech during live video: announces new objects only when they change with a speech cooldown, or on-demand via the Spacebar.
 
-### 4. Headless & Pure Terminal-Based Interface (Latest Update)
-- [x] **Frontend Stripped**:
-  - Removed reliance on heavy GUI windows (`cv2.imshow`, `matplotlib.pyplot`, `Gradio`).
-  - Archived legacy Gradio and matplotlib tools safely into `legacy_gui/` (`app.py`, `demo_bbox.py`).
-- [x] **Headless Camera Handler (`camera_handler.py`)**:
-  - Added single-frame capture with hardware auto-exposure & white-balance warmup.
-- [x] **Interactive & CLI Terminal Entry Point (`main.py`)**:
-  - Interactive terminal menu (Webcam snap, Continuous monitor, Image analysis, Voice toggle).
-  - Command-line flags for scripting (`--image`, `--webcam`, `--monitor`, `--save`, `--no-tts`).
-- [x] **Headless Model Testing Script (`test_image.py`)**:
-  - Updated to unpack all 5 engine objects and run direct headless terminal diagnostics.
+### 4. Live Video Stream & Mobile Phone Camera Integration (NEW)
+- [x] **Real-Time Visual Video Stream (`--live-view`)**:
+  - Live 30 FPS video feed window featuring real-time bounding boxes, color tags, confidence percentages, and instantaneous FPS counter.
+  - Window shortcuts: `[Q]` to Exit, `[SPACE]` to Speak current detection immediately, `[S]` to Save snapshot, `[M]` to Toggle voice mute.
+- [x] **Mobile Camera / IP Webcam Support (`camera_handler.py`)**:
+  - Use your high-resolution mobile phone camera over Wi-Fi instead of a low-quality laptop webcam.
+  - Native support for Android **IP Webcam**, **DroidCam**, and **Iriun Webcam**.
+  - Intelligent URL parsing (auto-appends `/video` endpoints for `IP:Port`).
+- [x] **Terminal & Headless Mode (`main.py`)**:
+  - Interactive terminal menu with camera source configuration (`Option 5`).
+  - Command-line flags for automation (`--live-view`, `--image`, `--webcam`, `--monitor`, `--camera`, `--save`, `--no-tts`).
 
 ### 5. Documentation & Presentation Assets
-- [x] Updated repository [`README.md`](README.md) with terminal commands and architecture table.
+- [x] Updated repository [`README.md`](README.md) with live video, mobile cam, and terminal documentation.
 - [x] Created [`VocaVision_Presentation.pptx`](VocaVision_Presentation.pptx) and [`VocaVision_Tech_Stack.pdf`](VocaVision_Tech_Stack.pdf).
+
+---
+
+## 📱 How to Use Your Mobile Phone as the Camera (IP Webcam)
+
+If your laptop camera has poor resolution or lighting issues, you can stream from your phone camera in 3 easy steps:
+
+### Option A: Using "IP Webcam" (Android — Recommended)
+1. Install **IP Webcam** (by Pavel Khlebovich) from Google Play Store on your phone.
+2. Connect your phone and laptop to the **same Wi-Fi network** (or connect laptop to your phone's Wi-Fi Hotspot).
+3. Open the app, scroll to the bottom, and tap **"Start server"**.
+4. Note the IPv4 address shown at the bottom of your phone screen (e.g. `http://192.168.1.15:8080`).
+5. Run VocaVision:
+   ```bash
+   # Live visual video stream with real-time bounding boxes & colors
+   python main.py --live-view --camera http://192.168.1.15:8080/video
+
+   # Or in terminal mode
+   python main.py --monitor --camera http://192.168.1.15:8080/video
+   ```
+   *(You can also simply run `python main.py`, pick option `5`, and enter `192.168.1.15:8080`)*.
+
+### Option B: Using DroidCam or Iriun Webcam (USB or Wi-Fi)
+* **DroidCam / Iriun**: Install the desktop client and mobile app. They register as a virtual USB webcam (usually device index `1` or `2`).
+  ```bash
+  python main.py --live-view --camera 1
+  ```
 
 ---
 
 ## 📋 Open Tasks & Roadmap for Teammates
 
-Here is the assigned task backlog for next development iterations:
+Here is the assigned task backlog for upcoming development iterations:
 
 | Priority | Task ID | Description | Target Area | Assignee / Status |
 |:---:|:---:|---|---|:---:|
@@ -83,30 +114,30 @@ git pull origin main
 pip install -r requirements.txt
 ```
 
-### 2. Launch Interactive Terminal
+### 2. Launch Interactive Menu
 ```bash
 python main.py
 ```
 
-### 3. Run Direct Headless Commands
+### 3. Direct Commands
 ```bash
-# Test an image file
-python main.py --image path/to/sample.jpg
+# Live video feed with real-time bounding box color tags
+python main.py --live-view
 
-# Capture from webcam in terminal
-python main.py --webcam
+# Live video feed using mobile phone camera over Wi-Fi
+python main.py --live-view --camera http://192.168.1.15:8080/video
 
-# Continuous camera monitor with voice alerts
+# Terminal headless camera monitoring
 python main.py --monitor --interval 2.0
 
-# Silent mode (no audio)
-python main.py --image path/to/sample.jpg --no-tts
+# Analyze a static photo
+python main.py --image path/to/sample.jpg
 ```
 
 ---
 
 ## 👥 Contribution Guidelines
 1. Create a feature branch for your task: `git checkout -b feature/TASK-ID-description`.
-2. Keep the codebase **100% headless / terminal-compatible** (do not add `cv2.imshow` or blocking GUI loops to core code).
+2. Keep the codebase modular and compatible with both headless terminal and live video modes.
 3. Update this file (`task.md`) when you complete or pick up a task.
 4. Verify your changes with `python test_image.py --image <image_path>` before pushing.

@@ -67,6 +67,23 @@ _YOLO_DISPLAY_NAMES: dict[str, str] = {
     "ankle_boot": "ankle boots",
 }
 
+_COLOR_BOX_BGR: dict[str, tuple[int, int, int]] = {
+    "red":     (  0,   0, 220),
+    "orange":  (  0, 140, 255),
+    "yellow":  (  0, 220, 220),
+    "green":   (  0, 180,   0),
+    "blue":    (220,  80,   0),
+    "navy":    (128,  20,   0),
+    "purple":  (180,   0, 180),
+    "pink":    (180,  80, 200),
+    "white":   (240, 240, 240),
+    "black":   ( 50,  50,  50),
+    "gray":    (150, 150, 150),
+    "brown":   ( 30,  80, 130),
+    "beige":   (180, 210, 220),
+    "neutral": (160, 160, 160),
+}
+
 # ── Model Paths ───────────────────────────────────────────────────────────────
 _DIR          = os.path.dirname(__file__)
 _MODELS_DIR   = os.path.join(_DIR, "models")
@@ -411,8 +428,15 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
             "color"   : color,
         })
 
-        # ── Draw bounding box ─────────────────────────────────────────────────
-        box_color = (0, 120, 255) if is_food else (50, 220, 80)
+        # ── Draw bounding box (tinted by detected color) ─────────────────────
+        if is_food:
+            box_color = (0, 140, 255)  # Food: vibrant orange/gold
+        elif color:
+            first_c = color.split()[0].lower()
+            box_color = _COLOR_BOX_BGR.get(first_c, (50, 220, 80))
+        else:
+            box_color = (50, 220, 80)
+
         cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, 2)
 
         # Label background banner above the box
@@ -420,8 +444,10 @@ def _analyze_with_yolo(yolo_model, frame: np.ndarray) -> tuple:
         (tw, th), _ = cv2.getTextSize(label_str, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
         lx1, ly1 = x1, max(0, y1 - th - 8)
         cv2.rectangle(annotated, (lx1, ly1), (lx1 + tw + 6, y1), box_color, -1)
+        # Use dark text on light color backgrounds (white, yellow, beige)
+        txt_color = (20, 20, 20) if color and color.split()[0].lower() in ("white", "yellow", "beige") else (255, 255, 255)
         cv2.putText(annotated, label_str, (lx1 + 3, y1 - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, txt_color, 1, cv2.LINE_AA)
 
     if not detections:
         return "I could not detect any known objects with enough confidence.", frame.copy(), []
