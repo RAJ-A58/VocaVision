@@ -55,9 +55,9 @@ VocaVision/
 │   ├── clothing_classifier.keras # TF legacy fallback
 │   └── food_classifier.keras     # TF food classifier
 │
-├── legacy_gui/                   # Archived web & legacy GUI scripts (Gradio, etc.)
+├── docs/                         # Presentation & technical stack documentation
 ├── task.md                       # Teammate progress tracker & task roadmap
-├── requirements.txt
+├── requirements.txt              # Cleaned production dependencies
 └── README.md
 ```
 

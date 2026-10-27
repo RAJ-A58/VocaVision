@@ -59,7 +59,7 @@ All neural networks and pipelines run **100% locally** without external API depe
 
 ### 5. Documentation & Presentation Assets
 - [x] Updated repository [`README.md`](README.md) with live video, mobile cam, and terminal documentation.
-- [x] Created [`VocaVision_Presentation.pptx`](VocaVision_Presentation.pptx) and [`VocaVision_Tech_Stack.pdf`](VocaVision_Tech_Stack.pdf).
+- [x] Organized presentation and architecture specifications in [`docs/`](docs/) (`VocaVision_Presentation.pptx` & `VocaVision_Tech_Stack.pdf`).
 
 ---
 
