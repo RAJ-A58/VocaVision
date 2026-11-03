@@ -16,3 +16,8 @@ python-dotenv>=1.0.0,<2.0
 
 # ── Optional: Enhanced Segmentation ─────────────────────────────────────────
 rembg>=2.0.50
+
+# ── Desktop app + CLIP zero-shot cross-check ─────────────────────────────────
+transformers>=4.40,<5
+flask>=3.0,<4
+onnxruntime

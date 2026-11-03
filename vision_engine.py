@@ -349,15 +349,21 @@ def _build_description(food_items: list, cloth_items: list) -> str:
             return f"{items[0]} and {items[1]}"
         return ", ".join(items[:-1]) + f", and {items[-1]}"
 
+    def _counted(items: list) -> list[str]:
+        """Collapse repeats: 3x 'Hamburger' -> '3 Hamburgers' (else 'a <label>')."""
+        counts: dict[str, int] = {}
+        for d in items:
+            counts[d["label"]] = counts.get(d["label"], 0) + 1
+        return [f"a {l}" if n == 1 else f"{n} {l}{'' if l.endswith('s') else 's'}"
+                for l, n in counts.items()]
+
     parts: list[str] = []
 
     if food_items:
-        names = [d["label"] for d in food_items]
-        determiners = [f"a {n}" for n in names]
-        parts.append(f"I can see {_oxford(determiners)}.")
+        parts.append(f"I can see {_oxford(_counted(food_items))}.")
 
     if cloth_items:
-        descs = [f"a {d['label']}" for d in cloth_items]
+        descs = _counted(cloth_items)
         connector = "I can also see" if parts else "I can see"
         parts.append(f"{connector} {_oxford(descs)}.")
 
@@ -519,6 +525,58 @@ def _analyze_fallback(food_model, clothing_model, frame: np.ndarray,
 
 
 
+# ── CLIP zero-shot fallback ───────────────────────────────────────────────────
+
+def _analyze_clip(food_model, clothing_model, frame: np.ndarray,
+                  using_pytorch: bool) -> tuple:
+    """Zero-shot CLIP recognition; falls back to the old classifiers on any failure."""
+    from utils import clip_classifier as clip_cls
+    from utils.annotator import _draw_fullframe_label
+
+    try:
+        res = clip_cls.classify(frame)
+    except Exception as e:
+        print(f"[CLIP] unavailable ({e}) -- using Fashion-MNIST classifier")
+        return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+
+    food_probs     = np.zeros(len(FOOD_CLASSES),     dtype=np.float32)
+    clothing_probs = np.zeros(len(CLOTHING_CLASSES), dtype=np.float32)
+    for (name, _, kind, cls), p in zip(res["labels"], res["probs"]):
+        if kind == "food":
+            food_probs[FOOD_CLASSES.index(name.replace(" ", "_"))] = p
+        elif kind == "clothing":
+            clothing_probs[CLOTHING_CLASSES.index(cls)] = p
+
+    name, kind, conf = res["name"], res["kind"], res["conf"]
+    print(f"[CLIP] best guess: {name} ({kind}) {conf:.0%}")
+
+    if kind == "none" or conf < 0.30:
+        return "I am not sure what this is. Please move closer and try again.", \
+               frame.copy(), food_probs, clothing_probs
+
+    if kind == "food":
+        description = f"I can see {name}. I am {conf:.0%} confident."
+        annotated = _draw_fullframe_label(frame, name, "food", conf)
+    else:
+        try:
+            color = clip_cls.classify_colour(frame, name)
+        except Exception:
+            color = describe_colors(clip_cls.centre_region(frame))
+        description = f"I can see a {color} {name}. I am {conf:.0%} confident."
+        annotated = _draw_fullframe_label(frame, name, color, conf)
+    return description, annotated, food_probs, clothing_probs
+
+
+def _fallback(food_model, clothing_model, frame, using_pytorch):
+    try:
+        from utils import clip_classifier as clip_cls
+        if clip_cls.is_available():
+            return _analyze_clip(food_model, clothing_model, frame, using_pytorch)
+    except Exception as e:
+        print(f"[CLIP] disabled: {e}")
+    return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+
+
 # ── Main Entry Point ──────────────────────────────────────────────────────────
 
 def analyze_image(food_model, clothing_model, frame: np.ndarray,
@@ -547,9 +605,31 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
         if not detections:
             if allow_fallback:
                 print("[YOLO] No confident detections -- falling back to classifier")
-                return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+                return _fallback(food_model, clothing_model, frame, using_pytorch)
             else:
                 return "I could not detect any known objects.", frame.copy(), np.zeros(len(FOOD_CLASSES), dtype=np.float32), np.zeros(len(CLOTHING_CLASSES), dtype=np.float32)
+
+        if allow_fallback:
+            # Cross-check with CLIP, which is much more reliable on single items
+            # (YOLO read a sneaker as "bag" at 67%). Photos that clearly contain
+            # several different things keep YOLO's multi-object result.
+            best = max(detections, key=lambda d: d["conf"])
+            distinct_strong = {d["raw"] for d in detections if d["conf"] >= 0.75}
+            if len(distinct_strong) < 2:
+                try:
+                    from utils import clip_classifier as clip_cls
+                    if clip_cls.is_available():
+                        res = clip_cls.classify(frame)
+                        norm = lambda s: "".join(ch for ch in s.lower() if ch.isalpha())
+                        a, b = norm(res["name"]), norm(best["raw"])
+                        agrees = a in b or b in a
+                        clip_wins = res["kind"] != "none" and not agrees and (
+                            res["conf"] >= 0.85 or (best["conf"] < 0.60 and res["conf"] >= best["conf"]))
+                        if clip_wins:
+                            print(f"[CLIP] overrides YOLO ({best['raw']} {best['conf']:.0%}) -> {res['name']} {res['conf']:.0%}")
+                            return _analyze_clip(food_model, clothing_model, frame, using_pytorch)
+                except Exception as e:
+                    print(f"[CLIP] cross-check skipped: {e}")
 
         # Build dummy prob arrays for the confidence chart in app.py
         food_probs     = np.zeros(len(FOOD_CLASSES),     dtype=np.float32)
@@ -582,4 +662,4 @@ def analyze_image(food_model, clothing_model, frame: np.ndarray,
 
     else:
         # Fallback to v2/v1 classifier pipeline
-        return _analyze_fallback(food_model, clothing_model, frame, using_pytorch)
+        return _fallback(food_model, clothing_model, frame, using_pytorch)
